@@ -13,6 +13,11 @@ Console& Console::the()
     return *s_the;
 }
 
+bool Console::is_initialized()
+{
+    return s_the != nullptr;
+}
+
 Console::Console()
     : CharacterDevice(5, 1)
 {
@@ -23,7 +28,7 @@ Console::~Console()
 {
 }
 
-bool Console::can_read(FileDescription&) const
+bool Console::can_read(const FileDescription&) const
 {
     return false;
 }

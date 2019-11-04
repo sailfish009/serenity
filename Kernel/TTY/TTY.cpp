@@ -68,7 +68,7 @@ ssize_t TTY::write(FileDescription&, const u8* buffer, ssize_t size)
     return size;
 }
 
-bool TTY::can_read(FileDescription&) const
+bool TTY::can_read(const FileDescription&) const
 {
     if (in_canonical_mode()) {
         return m_available_lines > 0;
@@ -76,7 +76,7 @@ bool TTY::can_read(FileDescription&) const
     return !m_input_buffer.is_empty();
 }
 
-bool TTY::can_write(FileDescription&) const
+bool TTY::can_write(const FileDescription&) const
 {
     return true;
 }
@@ -109,9 +109,6 @@ bool TTY::is_werase(u8 ch) const
 void TTY::emit(u8 ch)
 {
     if (should_generate_signals()) {
-        if (should_flush_on_signal())
-            flush_input();
-
         if (ch == m_termios.c_cc[VINTR]) {
             dbg() << tty_name() << ": VINTR pressed!";
             generate_signal(SIGINT);
@@ -208,6 +205,8 @@ void TTY::generate_signal(int signal)
 {
     if (!pgid())
         return;
+    if (should_flush_on_signal())
+        flush_input();
     dbg() << tty_name() << ": Send signal " << signal << " to everyone in pgrp " << pgid();
     InterruptDisabler disabler; // FIXME: Iterate over a set of process handles instead?
     Process::for_each_in_pgrp(pgid(), [&](auto& process) {

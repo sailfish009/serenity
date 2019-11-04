@@ -210,6 +210,8 @@ public:
     u32 frame_ptr() const { return m_tss.ebp; }
     u32 stack_ptr() const { return m_tss.esp; }
 
+    RegisterDump& get_RegisterDump_from_stack();
+
     u16 selector() const { return m_far_ptr.selector; }
     TSS32& tss() { return m_tss; }
     const TSS32& tss() const { return m_tss; }
@@ -220,6 +222,7 @@ public:
     VirtualAddress thread_specific_data() const { return m_thread_specific_data; }
 
     u64 sleep(u32 ticks);
+    u64 sleep_until(u64 wakeup_time);
 
     enum class BlockResult {
         WokeNormally,
@@ -291,7 +294,6 @@ public:
     void set_has_used_fpu(bool b) { m_has_used_fpu = b; }
 
     void set_default_signal_dispositions();
-    void push_value_on_user_stack(RegisterDump&, u32);
     void push_value_on_stack(u32);
     void make_userspace_stack_for_main_thread(Vector<String> arguments, Vector<String> environment);
     void make_userspace_stack_for_secondary_thread(void* argument);

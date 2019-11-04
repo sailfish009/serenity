@@ -16,6 +16,9 @@ public:
 
     RefPtr<CTCPSocket> accept();
 
+    Optional<IPv4Address> local_address() const;
+    Optional<u16> local_port() const;
+
     Function<void()> on_ready_to_accept;
 
 private:

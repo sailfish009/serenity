@@ -1,5 +1,7 @@
 #pragma once
 
+#include <AK/Bitmap.h>
+#include <Kernel/KBuffer.h>
 #include <Kernel/FileSystem/DiskBackedFileSystem.h>
 #include <Kernel/FileSystem/Inode.h>
 #include <Kernel/FileSystem/ext2_fs.h>
@@ -46,7 +48,7 @@ private:
 
     bool write_directory(const Vector<FS::DirectoryEntry>&);
     void populate_lookup_cache() const;
-    bool resize(u64);
+    KResult resize(u64);
 
     Ext2FS& fs();
     const Ext2FS& fs() const;
@@ -78,8 +80,10 @@ private:
     typedef unsigned InodeIndex;
     explicit Ext2FS(NonnullRefPtr<DiskDevice>&&);
 
-    const ext2_super_block& super_block() const;
-    const ext2_group_desc& group_descriptor(unsigned groupIndex) const;
+    const ext2_super_block& super_block() const { return m_super_block; }
+    const ext2_group_desc& group_descriptor(GroupIndex) const;
+    ext2_group_desc* block_group_descriptors() { return (ext2_group_desc*)m_cached_group_descriptor_table.value().data(); }
+    const ext2_group_desc* block_group_descriptors() const { return (const ext2_group_desc*)m_cached_group_descriptor_table.value().data(); }
     void flush_block_group_descriptor_table();
     unsigned first_block_of_group(unsigned groupIndex) const;
     unsigned inodes_per_block() const;
@@ -90,14 +94,14 @@ private:
     bool write_ext2_inode(InodeIndex, const ext2_inode&);
     bool read_block_containing_inode(InodeIndex inode, BlockIndex& block_index, unsigned& offset, u8* buffer) const;
 
-    ByteBuffer read_super_block() const;
-    bool write_super_block(const ext2_super_block&);
+    bool flush_super_block();
 
     virtual const char* class_name() const override;
     virtual InodeIdentifier root_inode() const override;
     virtual RefPtr<Inode> create_inode(InodeIdentifier parentInode, const String& name, mode_t, off_t size, dev_t, int& error) override;
     virtual RefPtr<Inode> create_directory(InodeIdentifier parentInode, const String& name, mode_t, int& error) override;
     virtual RefPtr<Inode> get_inode(InodeIdentifier) const override;
+    virtual void flush_writes() override;
 
     BlockIndex first_block_index() const;
     InodeIndex allocate_inode(GroupIndex preferred_group, off_t expected_size);
@@ -128,10 +132,28 @@ private:
 
     unsigned m_block_group_count { 0 };
 
-    mutable ByteBuffer m_cached_super_block;
-    mutable ByteBuffer m_cached_group_descriptor_table;
+    mutable ext2_super_block m_super_block;
+    mutable Optional<KBuffer> m_cached_group_descriptor_table;
 
     mutable HashMap<BlockIndex, RefPtr<Ext2FSInode>> m_inode_cache;
+
+    bool m_super_block_dirty { false };
+    bool m_block_group_descriptors_dirty { false };
+
+    struct CachedBitmap {
+        CachedBitmap(BlockIndex bi, KBuffer&& buf)
+            : bitmap_block_index(bi)
+            , buffer(move(buf))
+        {}
+        BlockIndex bitmap_block_index { 0 };
+        bool dirty { false };
+        KBuffer buffer;
+        Bitmap bitmap(u32 blocks_per_group) { return Bitmap::wrap(buffer.data(), blocks_per_group); }
+    };
+
+    CachedBitmap& get_bitmap_block(BlockIndex);
+
+    Vector<OwnPtr<CachedBitmap>> m_cached_bitmaps;
 };
 
 inline Ext2FS& Ext2FSInode::fs()

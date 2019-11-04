@@ -10,6 +10,11 @@
 class Inode;
 class VMObject;
 
+enum class PageFaultResponse {
+    ShouldCrash,
+    Continue,
+};
+
 class Region final : public InlineLinkedListNode<Region> {
     friend class MemoryManager;
 
@@ -46,6 +51,8 @@ public:
     void set_shared(bool shared) { m_shared = shared; }
 
     bool is_user_accessible() const { return m_user_accessible; }
+
+    PageFaultResponse handle_fault(const PageFault&);
 
     NonnullOwnPtr<Region> clone();
 
@@ -89,20 +96,6 @@ public:
     size_t amount_resident() const;
     size_t amount_shared() const;
 
-    PageDirectory* page_directory() { return m_page_directory.ptr(); }
-
-    void set_page_directory(PageDirectory& page_directory)
-    {
-        ASSERT(!m_page_directory || m_page_directory == &page_directory);
-        m_page_directory = page_directory;
-    }
-
-    void release_page_directory()
-    {
-        ASSERT(m_page_directory);
-        m_page_directory.clear();
-    }
-
     bool should_cow(size_t page_index) const;
     void set_should_cow(size_t page_index, bool);
 
@@ -114,6 +107,16 @@ public:
             m_access &= ~Access::Write;
     }
 
+    void map(PageDirectory&);
+    enum class ShouldDeallocateVirtualMemoryRange {
+        No,
+        Yes,
+    };
+    void unmap(ShouldDeallocateVirtualMemoryRange = ShouldDeallocateVirtualMemoryRange::Yes);
+
+    void remap();
+    void remap_page(size_t index);
+
     // For InlineLinkedListNode
     Region* m_next { nullptr };
     Region* m_prev { nullptr };
@@ -121,10 +124,14 @@ public:
     // NOTE: These are public so we can make<> them.
     Region(const Range&, const String&, u8 access);
     Region(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmo, const String&, u8 access);
-    Region(const Range&, RefPtr<Inode>&&, const String&, u8 access);
+    Region(const Range&, NonnullRefPtr<Inode>, const String&, u8 access);
 
 private:
     Bitmap& ensure_cow_map() const;
+
+    PageFaultResponse handle_cow_fault(size_t page_index);
+    PageFaultResponse handle_inode_fault(size_t page_index);
+    PageFaultResponse handle_zero_fault(size_t page_index);
 
     RefPtr<PageDirectory> m_page_directory;
     Range m_range;

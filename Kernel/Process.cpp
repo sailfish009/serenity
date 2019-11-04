@@ -122,7 +122,7 @@ Region* Process::allocate_region(VirtualAddress vaddr, size_t size, const String
     if (!range.is_valid())
         return nullptr;
     m_regions.append(Region::create_user_accessible(range, name, prot_to_region_access_flags(prot)));
-    MM.map_region(*this, m_regions.last());
+    m_regions.last().map(page_directory());
     if (commit)
         m_regions.last().commit();
     return &m_regions.last();
@@ -134,7 +134,7 @@ Region* Process::allocate_file_backed_region(VirtualAddress vaddr, size_t size, 
     if (!range.is_valid())
         return nullptr;
     m_regions.append(Region::create_user_accessible(range, inode, name, prot_to_region_access_flags(prot)));
-    MM.map_region(*this, m_regions.last());
+    m_regions.last().map(page_directory());
     return &m_regions.last();
 }
 
@@ -145,7 +145,7 @@ Region* Process::allocate_region_with_vmo(VirtualAddress vaddr, size_t size, Non
         return nullptr;
     offset_in_vmo &= PAGE_MASK;
     m_regions.append(Region::create_user_accessible(range, move(vmo), offset_in_vmo, name, prot_to_region_access_flags(prot)));
-    MM.map_region(*this, m_regions.last());
+    m_regions.last().map(page_directory());
     return &m_regions.last();
 }
 
@@ -259,7 +259,7 @@ int Process::sys$munmap(void* addr, size_t size)
         }
 
         // We manually unmap the old region here, specifying that we *don't* want the VM deallocated.
-        MM.unmap_region(*old_region, false);
+        old_region->unmap(Region::ShouldDeallocateVirtualMemoryRange::No);
         deallocate_region(*old_region);
 
         // Instead we give back the unwanted VM manually.
@@ -267,7 +267,7 @@ int Process::sys$munmap(void* addr, size_t size)
 
         // And finally we map the new region(s).
         for (auto* new_region : new_regions) {
-            MM.map_region(*this, *new_region);
+            new_region->map(page_directory());
         }
         return 0;
     }
@@ -283,7 +283,7 @@ int Process::sys$mprotect(void* addr, size_t size, int prot)
     if (!region)
         return -EINVAL;
     region->set_writable(prot & PROT_WRITE);
-    MM.remap_region(page_directory(), *region);
+    region->remap();
     return 0;
 }
 
@@ -313,7 +313,7 @@ Process* Process::fork(RegisterDump& regs)
         dbg() << "fork: cloning Region{" << &region << "} '" << region.name() << "' @ " << region.vaddr();
 #endif
         child->m_regions.append(region.clone());
-        MM.map_region(*child, child->m_regions.last());
+        child->m_regions.last().map(child->page_directory());
 
         if (&region == m_master_tls_region)
             child->m_master_tls_region = &child->m_regions.last();
@@ -885,7 +885,7 @@ void create_signal_trampolines()
     memcpy(code_ptr, trampoline, trampoline_size);
 
     trampoline_region->set_writable(false);
-    MM.remap_region(*trampoline_region->page_directory(), *trampoline_region);
+    trampoline_region->remap();
 }
 
 int Process::sys$restore_signal_mask(u32 mask)
@@ -3153,4 +3153,66 @@ int Process::sys$getrandom(void* buffer, size_t buffer_size, unsigned int flags 
     }
 
     return 0;
+}
+
+int Process::sys$clock_gettime(clockid_t clock_id, timespec* ts)
+{
+    if (!validate_write_typed(ts))
+        return -EFAULT;
+
+    switch (clock_id) {
+    case CLOCK_MONOTONIC:
+        ts->tv_sec = g_uptime / TICKS_PER_SECOND;
+        ts->tv_nsec = (g_uptime % TICKS_PER_SECOND) * 1000000;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+int Process::sys$clock_nanosleep(const Syscall::SC_clock_nanosleep_params* params)
+{
+    if (!validate_read_typed(params))
+        return -EFAULT;
+
+    if (params->requested_sleep && !validate_read_typed(params->requested_sleep))
+        return -EFAULT;
+
+    if (params->remaining_sleep && !validate_write_typed(params->remaining_sleep))
+        return -EFAULT;
+
+    clockid_t clock_id = params->clock_id;
+    int flags = params->flags;
+    bool is_absolute = flags & TIMER_ABSTIME;
+    auto* requested_sleep = params->requested_sleep;
+    auto* remaining_sleep = params->remaining_sleep;
+
+    switch (clock_id) {
+    case CLOCK_MONOTONIC: {
+        u64 wakeup_time;
+        if (is_absolute) {
+            u64 time_to_wake = (requested_sleep->tv_sec * 1000 + requested_sleep->tv_nsec / 1000000);
+            wakeup_time = current->sleep_until(time_to_wake);
+        } else {
+            u32 ticks_to_sleep = (requested_sleep->tv_sec * 1000 + requested_sleep->tv_nsec / 1000000);
+            if (!ticks_to_sleep)
+                return 0;
+            wakeup_time = current->sleep(ticks_to_sleep);
+        }
+        if (wakeup_time > g_uptime) {
+            u32 ticks_left = wakeup_time - g_uptime;
+            if (!is_absolute && remaining_sleep) {
+                remaining_sleep->tv_sec = ticks_left / TICKS_PER_SECOND;
+                ticks_left -= remaining_sleep->tv_sec * TICKS_PER_SECOND;
+                remaining_sleep->tv_nsec = ticks_left * 1000000;
+            }
+            return -EINTR;
+        }
+        return 0;
+    }
+    default:
+        return -EINVAL;
+    }
 }

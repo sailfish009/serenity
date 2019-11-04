@@ -23,11 +23,6 @@
 class KBuffer;
 class SynthFSInode;
 
-enum class PageFaultResponse {
-    ShouldCrash,
-    Continue,
-};
-
 #define MM MemoryManager::the()
 
 class MemoryManager {
@@ -47,9 +42,6 @@ public:
 
     PageFaultResponse handle_page_fault(const PageFault&);
 
-    bool map_region(Process&, Region&);
-    bool unmap_region(Region&, bool deallocate_range = true);
-
     void populate_page_directory(PageDirectory&);
 
     void enter_process_paging_scope(Process&);
@@ -67,13 +59,10 @@ public:
     void deallocate_user_physical_page(PhysicalPage&&);
     void deallocate_supervisor_physical_page(PhysicalPage&&);
 
-    void remap_region(PageDirectory&, Region&);
-
     void map_for_kernel(VirtualAddress, PhysicalAddress, bool cache_disabled = false);
 
     OwnPtr<Region> allocate_kernel_region(size_t, const StringView& name, bool user_accessible = false, bool should_commit = true);
     OwnPtr<Region> allocate_user_accessible_kernel_region(size_t, const StringView& name);
-    void map_region_at_address(PageDirectory&, Region&, VirtualAddress);
 
     unsigned user_physical_pages() const { return m_user_physical_pages; }
     unsigned user_physical_pages_used() const { return m_user_physical_pages_used; }
@@ -98,8 +87,6 @@ private:
     void register_region(Region&);
     void unregister_region(Region&);
 
-    void remap_region_page(Region&, unsigned page_index_in_region);
-
     void initialize_paging();
     void flush_entire_tlb();
     void flush_tlb(VirtualAddress);
@@ -115,10 +102,6 @@ private:
     static Region* kernel_region_from_vaddr(VirtualAddress);
 
     static Region* region_from_vaddr(VirtualAddress);
-
-    bool copy_on_write(Region&, unsigned page_index_in_region);
-    bool page_in_from_inode(Region&, unsigned page_index_in_region);
-    bool zero_page(Region& region, unsigned page_index_in_region);
 
     u8* quickmap_page(PhysicalPage&);
     void unquickmap_page();

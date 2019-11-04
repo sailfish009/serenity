@@ -89,8 +89,15 @@ bool copy_file(String src_path, String dst_path, struct stat src_stat, int src_f
         }
     }
 
+    if (src_stat.st_size > 0) {
+        if (ftruncate(dst_fd, src_stat.st_size) < 0) {
+            perror("cp: ftruncate");
+            return false;
+        }
+    }
+
     for (;;) {
-        char buffer[BUFSIZ];
+        char buffer[32768];
         ssize_t nread = read(src_fd, buffer, sizeof(buffer));
         if (nread < 0) {
             perror("read src");
